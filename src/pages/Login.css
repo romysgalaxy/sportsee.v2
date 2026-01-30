@@ -20,30 +20,9 @@
   margin-bottom: 80px;
 }
 
-.logo-icon {
-  display: flex;
-  gap: 2px;
-  align-items: flex-end;
-}
-
-.logo-bar:nth-child(1) {
-  height: 12px;
-}
-
-.logo-bar:nth-child(2) {
-  height: 20px;
-}
-
-.logo-bar:nth-child(3) {
-  height: 16px;
-}
-
-.logo-bar:nth-child(4) {
-  height: 24px;
-}
-
-.logo-bar:nth-child(5) {
-  height: 14px;
+.logo img {
+  width: 40px;
+  height: 40px;
 }
 
 /* Form Card */
