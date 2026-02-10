@@ -1,5 +1,4 @@
-"use client";
-import { useState } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   BarChart,
   Bar,
@@ -7,7 +6,6 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
   ComposedChart,
   Line,
@@ -15,50 +13,296 @@ import {
   Pie,
   Cell,
 } from "recharts";
+import { useApi } from "../hooks/useApi";
+import { apiService } from "../services/api";
 import "./Home.css";
 
-// Fake data
-const userData = {
-  name: "Clara Dupont",
-  memberSince: "14 juin 2023",
-  totalDistance: 847,
-  avatar: "/avatar.jpg",
+// Calculate date ranges for 4 weeks based on period offset
+const calculateWeekRanges = (periodOffset = 0) => {
+  const ranges = [];
+  const now = new Date();
+  const offsetDays = periodOffset * 28; // 4 weeks = 28 days
+
+  for (let i = 0; i < 4; i++) {
+    const endWeek = new Date(now);
+    endWeek.setDate(endWeek.getDate() - offsetDays - (i * 7));
+
+    const startWeek = new Date(endWeek);
+    startWeek.setDate(startWeek.getDate() - 6);
+
+    ranges.unshift({
+      startWeek: startWeek.toISOString().split('T')[0],
+      endWeek: endWeek.toISOString().split('T')[0],
+      label: `S${4 - i}`,
+    });
+  }
+
+  return ranges;
 };
 
-const weeklyKmData = [
-  { name: "S1", km: 21 },
-  { name: "S2", km: 24 },
-  { name: "S3", km: 14 },
-  { name: "S4", km: 28 },
-];
+// Calculate last 7 days for BPM chart
+const calculateLast7Days = (periodOffset = 0) => {
+  const now = new Date();
+  const offsetDays = periodOffset * 7; // Navigate by 7 days periods
 
-const heartRateData = [
-  { day: "Lun", min: 135, max: 178, avg: 165 },
-  { day: "Mar", min: 140, max: 175, avg: 160 },
-  { day: "Mer", min: 138, max: 180, avg: 168 },
-  { day: "Jeu", min: 142, max: 172, avg: 158 },
-  { day: "Ven", min: 136, max: 168, avg: 155 },
-  { day: "Sam", min: 145, max: 182, avg: 170 },
-  { day: "Dim", min: 140, max: 175, avg: 162 },
-];
+  const endDate = new Date(now);
+  endDate.setDate(endDate.getDate() - offsetDays);
 
-const weeklyGoalData = [
-  { name: "Réalisées", value: 4, color: "#2B4BF2" },
-  { name: "Restants", value: 2, color: "#E8ECFF" },
-];
+  const startDate = new Date(endDate);
+  startDate.setDate(startDate.getDate() - 6);
 
-const thisWeekStats = {
-  startDate: "23/06/2025",
-  endDate: "30/06/2025",
-  completedRuns: 4,
-  goalRuns: 6,
-  activityDuration: 140,
-  distance: 21.7,
+  return {
+    startWeek: startDate.toISOString().split('T')[0],
+    endWeek: endDate.toISOString().split('T')[0],
+  };
 };
 
 export default function Home() {
-  const [kmDateRange] = useState("28 mai - 25 juin");
-  const [bpmDateRange] = useState("28 mai - 04 juin");
+  // Navigation states
+  const [kmPeriodOffset, setKmPeriodOffset] = useState(0);
+  const [bpmPeriodOffset, setBpmPeriodOffset] = useState(0);
+
+  // Loading states for navigation
+  const [loadingKmNav, setLoadingKmNav] = useState(false);
+  const [loadingBpmNav, setLoadingBpmNav] = useState(false);
+
+  // Data states
+  const [kmActivityData, setKmActivityData] = useState(null);
+  const [bpmActivityData, setBpmActivityData] = useState(null);
+
+  // Fetch user info (only once)
+  const { data: userInfo, loading: loadingUser, error: errorUser } = useApi(
+    () => apiService.getUserInfo(),
+    []
+  );
+
+  // Initial load of KM data
+  const { loading: initialLoadingKm, error: errorKmActivity } = useApi(
+    async () => {
+      const weekRanges = calculateWeekRanges(0);
+      if (weekRanges.length === 0) return null;
+
+      const allData = await Promise.all(
+        weekRanges.map(range =>
+          apiService.getUserActivity(range.startWeek, range.endWeek)
+        )
+      );
+
+      setKmActivityData(allData);
+      return allData;
+    },
+    []
+  );
+
+  // Initial load of BPM data
+  const { loading: initialLoadingBpm, error: errorBpmActivity } = useApi(
+    async () => {
+      const bpmRange = calculateLast7Days(0);
+      const data = await apiService.getUserActivity(bpmRange.startWeek, bpmRange.endWeek);
+      setBpmActivityData(data);
+      return data;
+    },
+    []
+  );
+
+  // Manual fetch for KM chart navigation
+  const fetchKmData = useCallback(async (offset) => {
+    setLoadingKmNav(true);
+    try {
+      const weekRanges = calculateWeekRanges(offset);
+      const allData = await Promise.all(
+        weekRanges.map(range =>
+          apiService.getUserActivity(range.startWeek, range.endWeek)
+        )
+      );
+      setKmActivityData(allData);
+    } catch (error) {
+      console.error('Error fetching KM data:', error);
+    } finally {
+      setLoadingKmNav(false);
+    }
+  }, []);
+
+  // Manual fetch for BPM chart navigation
+  const fetchBpmData = useCallback(async (offset) => {
+    setLoadingBpmNav(true);
+    try {
+      const bpmRange = calculateLast7Days(offset);
+      const data = await apiService.getUserActivity(bpmRange.startWeek, bpmRange.endWeek);
+      setBpmActivityData(data);
+    } catch (error) {
+      console.error('Error fetching BPM data:', error);
+    } finally {
+      setLoadingBpmNav(false);
+    }
+  }, []);
+
+  // Navigation handlers
+  const handleKmPrevious = useCallback(() => {
+    const newOffset = kmPeriodOffset + 1;
+    setKmPeriodOffset(newOffset);
+    fetchKmData(newOffset);
+  }, [kmPeriodOffset, fetchKmData]);
+
+  const handleKmNext = useCallback(() => {
+    if (kmPeriodOffset === 0) return;
+    const newOffset = kmPeriodOffset - 1;
+    setKmPeriodOffset(newOffset);
+    fetchKmData(newOffset);
+  }, [kmPeriodOffset, fetchKmData]);
+
+  const handleBpmPrevious = useCallback(() => {
+    const newOffset = bpmPeriodOffset + 1;
+    setBpmPeriodOffset(newOffset);
+    fetchBpmData(newOffset);
+  }, [bpmPeriodOffset, fetchBpmData]);
+
+  const handleBpmNext = useCallback(() => {
+    if (bpmPeriodOffset === 0) return;
+    const newOffset = bpmPeriodOffset - 1;
+    setBpmPeriodOffset(newOffset);
+    fetchBpmData(newOffset);
+  }, [bpmPeriodOffset, fetchBpmData]);
+
+  // Calculate current week ranges
+  const weekRanges = useMemo(() => calculateWeekRanges(kmPeriodOffset), [kmPeriodOffset]);
+  const bpmRange = useMemo(() => calculateLast7Days(bpmPeriodOffset), [bpmPeriodOffset]);
+
+  // Process data for KM chart
+  const weeklyKmData = useMemo(() => {
+    if (!kmActivityData) return [];
+
+    return kmActivityData.map((weekData, index) => {
+      const totalKm = weekData.reduce((sum, session) => sum + session.distance, 0);
+      return {
+        name: weekRanges[index]?.label || `S${index + 1}`,
+        km: parseFloat(totalKm.toFixed(1)),
+      };
+    });
+  }, [kmActivityData, weekRanges]);
+
+  // Process data for BPM chart (last 7 days)
+  const heartRateData = useMemo(() => {
+    if (!bpmActivityData || bpmActivityData.length === 0) return [];
+
+    const daysOfWeek = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+
+    // Get the last 7 days from the data
+    const last7Days = bpmActivityData.slice(-7);
+
+    return last7Days.map((session) => {
+      const sessionDate = new Date(session.date);
+      const dayName = daysOfWeek[sessionDate.getDay() === 0 ? 6 : sessionDate.getDay() - 1];
+
+      return {
+        day: dayName,
+        min: session.heartRate.min,
+        max: session.heartRate.max,
+        avg: session.heartRate.average,
+      };
+    });
+  }, [bpmActivityData]);
+
+  // Calculate this week stats from latest 4-week period
+  const thisWeekStats = useMemo(() => {
+    if (!kmActivityData || kmActivityData.length === 0) return null;
+
+    const latestWeekData = kmActivityData[kmActivityData.length - 1];
+    const completedRuns = latestWeekData.length;
+    const goalRuns = 6;
+    const totalDuration = latestWeekData.reduce((sum, s) => sum + s.duration, 0);
+    const totalDistance = latestWeekData.reduce((sum, s) => sum + s.distance, 0);
+
+    const latestRange = weekRanges[weekRanges.length - 1];
+
+    return {
+      startDate: latestRange ? new Date(latestRange.startWeek).toLocaleDateString('fr-FR') : '',
+      endDate: latestRange ? new Date(latestRange.endWeek).toLocaleDateString('fr-FR') : '',
+      completedRuns,
+      goalRuns,
+      activityDuration: totalDuration,
+      distance: parseFloat(totalDistance.toFixed(1)),
+    };
+  }, [kmActivityData, weekRanges]);
+
+  const weeklyGoalData = useMemo(() => {
+    if (!thisWeekStats) return [];
+
+    return [
+      { name: "Réalisées", value: thisWeekStats.completedRuns, color: "#2B4BF2" },
+      { name: "Restants", value: Math.max(0, thisWeekStats.goalRuns - thisWeekStats.completedRuns), color: "#E8ECFF" },
+    ];
+  }, [thisWeekStats]);
+
+  // Calculate averages
+  const averageKm = useMemo(() => {
+    if (weeklyKmData.length === 0) return 0;
+    const total = weeklyKmData.reduce((sum, week) => sum + week.km, 0);
+    return (total / weeklyKmData.length).toFixed(0);
+  }, [weeklyKmData]);
+
+  const averageBpm = useMemo(() => {
+    if (heartRateData.length === 0) return 0;
+    const total = heartRateData.reduce((sum, day) => sum + day.avg, 0);
+    return Math.round(total / heartRateData.length);
+  }, [heartRateData]);
+
+  // Date range labels
+  const kmDateRange = useMemo(() => {
+    if (weekRanges.length === 0) return "";
+    const start = new Date(weekRanges[0].startWeek);
+    const end = new Date(weekRanges[weekRanges.length - 1].endWeek);
+    return `${start.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })} - ${end.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}`;
+  }, [weekRanges]);
+
+  const bpmDateRange = useMemo(() => {
+    const start = new Date(bpmRange.startWeek);
+    const end = new Date(bpmRange.endWeek);
+    return `${start.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })} - ${end.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}`;
+  }, [bpmRange]);
+
+  // Loading state
+  if (loadingUser || initialLoadingKm || initialLoadingBpm) {
+    return (
+      <div className="home-container">
+        <div style={{ textAlign: 'center', padding: '40px' }}>
+          <p>Chargement des données...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (errorUser || errorKmActivity || errorBpmActivity) {
+    return (
+      <div className="home-container">
+        <div style={{ textAlign: 'center', padding: '40px', color: 'red' }}>
+          <p>Erreur: {errorUser || errorKmActivity || errorBpmActivity}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!userInfo || !thisWeekStats) {
+    return (
+      <div className="home-container">
+        <div style={{ textAlign: 'center', padding: '40px' }}>
+          <p>Aucune donnée disponible</p>
+        </div>
+      </div>
+    );
+  }
+
+  const userData = {
+    name: `${userInfo.profile.firstName} ${userInfo.profile.lastName}`,
+    memberSince: new Date(userInfo.profile.createdAt).toLocaleDateString('fr-FR', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    }),
+    totalDistance: parseFloat(userInfo.statistics.totalDistance).toFixed(0),
+    avatar: userInfo.profile.profilePicture,
+  };
 
   return (
     <div className="home-container">
@@ -87,19 +331,31 @@ export default function Home() {
       {/* Performances Section */}
       <section className="performances-section">
         <h2 className="section-title">Vos dernières performances</h2>
-        
+
         <div className="performances-grid">
           {/* Weekly Kilometers Chart */}
           <div className="chart-card">
             <div className="chart-header">
               <div className="chart-title-group">
-                <h3 className="chart-value blue">18km en moyenne</h3>
+                <h3 className="chart-value blue">
+                  {loadingKmNav ? '...' : `${averageKm}km en moyenne`}
+                </h3>
                 <div className="date-navigation">
-                  <button className="nav-btn" aria-label="Période précédente">
+                  <button
+                    className="nav-btn"
+                    aria-label="4 semaines précédentes"
+                    onClick={handleKmPrevious}
+                    disabled={loadingKmNav}
+                  >
                     <ChevronLeftIcon />
                   </button>
                   <span className="date-range">{kmDateRange}</span>
-                  <button className="nav-btn" aria-label="Période suivante">
+                  <button
+                    className="nav-btn"
+                    aria-label="4 semaines suivantes"
+                    onClick={handleKmNext}
+                    disabled={kmPeriodOffset === 0 || loadingKmNav}
+                  >
                     <ChevronRightIcon />
                   </button>
                 </div>
@@ -110,23 +366,21 @@ export default function Home() {
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={weeklyKmData} barCategoryGap="30%">
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E8E8E8" />
-                  <XAxis 
-                    dataKey="name" 
-                    axisLine={false} 
+                  <XAxis
+                    dataKey="name"
+                    axisLine={false}
                     tickLine={false}
                     tick={{ fill: "#9B9EAC", fontSize: 12 }}
                   />
-                  <YAxis 
-                    axisLine={false} 
+                  <YAxis
+                    axisLine={false}
                     tickLine={false}
                     tick={{ fill: "#9B9EAC", fontSize: 12 }}
-                    domain={[0, 30]}
-                    ticks={[0, 10, 20, 30]}
                   />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: "#2B4BF2", 
-                      border: "none", 
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "#2B4BF2",
+                      border: "none",
                       borderRadius: "4px",
                       color: "white"
                     }}
@@ -149,50 +403,60 @@ export default function Home() {
           <div className="chart-card">
             <div className="chart-header">
               <div className="chart-title-group">
-                <h3 className="chart-value red">163 BPM</h3>
+                <h3 className="chart-value red">
+                  {loadingBpmNav ? '...' : `${averageBpm} BPM`}
+                </h3>
                 <div className="date-navigation">
-                  <button className="nav-btn" aria-label="Période précédente">
+                  <button
+                    className="nav-btn"
+                    aria-label="Semaine précédente"
+                    onClick={handleBpmPrevious}
+                    disabled={loadingBpmNav}
+                  >
                     <ChevronLeftIcon />
                   </button>
                   <span className="date-range">{bpmDateRange}</span>
-                  <button className="nav-btn" aria-label="Période suivante">
+                  <button
+                    className="nav-btn"
+                    aria-label="Semaine suivante"
+                    onClick={handleBpmNext}
+                    disabled={bpmPeriodOffset === 0 || loadingBpmNav}
+                  >
                     <ChevronRightIcon />
                   </button>
                 </div>
               </div>
-              <p className="chart-subtitle">Fréquence cardiaque moyenne</p>
+              <p className="chart-subtitle">Fréquence cardiaque moyenne (7 derniers jours)</p>
             </div>
             <div className="chart-container">
               <ResponsiveContainer width="100%" height={200}>
                 <ComposedChart data={heartRateData}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E8E8E8" />
-                  <XAxis 
-                    dataKey="day" 
-                    axisLine={false} 
+                  <XAxis
+                    dataKey="day"
+                    axisLine={false}
                     tickLine={false}
                     tick={{ fill: "#9B9EAC", fontSize: 12 }}
                   />
-                  <YAxis 
-                    axisLine={false} 
+                  <YAxis
+                    axisLine={false}
                     tickLine={false}
                     tick={{ fill: "#9B9EAC", fontSize: 12 }}
-                    domain={[130, 187]}
-                    ticks={[130, 145, 160, 187]}
                   />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: "#FF6B6B", 
-                      border: "none", 
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "#FF6B6B",
+                      border: "none",
                       borderRadius: "4px",
                       color: "white"
                     }}
                   />
                   <Bar dataKey="min" fill="#FFDAD9" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="max" fill="#FF6B6B" radius={[4, 4, 0, 0]} />
-                  <Line 
-                    type="monotone" 
-                    dataKey="avg" 
-                    stroke="#2B4BF2" 
+                  <Line
+                    type="monotone"
+                    dataKey="avg"
+                    stroke="#2B4BF2"
                     strokeWidth={2}
                     dot={{ fill: "#2B4BF2", strokeWidth: 2, r: 4 }}
                   />
@@ -210,7 +474,7 @@ export default function Home() {
               </span>
               <span className="legend-item">
                 <span className="legend-dot blue"></span>
-                Max BPM
+                Moy BPM
               </span>
             </div>
           </div>

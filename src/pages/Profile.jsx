@@ -1,28 +1,73 @@
-"use client";
-
+import { useApi } from "../hooks/useApi";
+import { apiService } from "../services/api";
 import "./Profile.css";
 
-// Fake user data
-const userData = {
-  name: "Clara Dupont",
-  memberSince: "14 juin 2023",
-  avatar: "/avatar.jpg",
-  age: 29,
-  gender: "Femme",
-  height: "1m68",
-  weight: "58kg",
-};
-
-// Fake statistics data
-const statsData = {
-  totalTime: { hours: 27, minutes: 15 },
-  caloriesBurned: 25000,
-  totalDistance: 312,
-  restDays: 9,
-  sessions: 41,
-};
-
 export default function Profile() {
+  // Fetch user info
+  const { data: userInfo, loading, error } = useApi(
+    () => apiService.getUserInfo(),
+    []
+  );
+
+  // Loading state
+  if (loading) {
+    return (
+      <div className="profile-container">
+        <div style={{ textAlign: 'center', padding: '40px' }}>
+          <p>Chargement des données...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="profile-container">
+        <div style={{ textAlign: 'center', padding: '40px', color: 'red' }}>
+          <p>Erreur: {error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!userInfo) {
+    return (
+      <div className="profile-container">
+        <div style={{ textAlign: 'center', padding: '40px' }}>
+          <p>Aucune donnée disponible</p>
+        </div>
+      </div>
+    );
+  }
+
+  const userData = {
+    name: `${userInfo.profile.firstName} ${userInfo.profile.lastName}`,
+    memberSince: new Date(userInfo.profile.createdAt).toLocaleDateString('fr-FR', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    }),
+    avatar: userInfo.profile.profilePicture,
+    age: userInfo.profile.age,
+    gender: userInfo.profile.age >= 18 ? "Adulte" : "Jeune",
+    height: `${Math.floor(userInfo.profile.height / 100)}m${userInfo.profile.height % 100}`,
+    weight: `${userInfo.profile.weight}kg`,
+  };
+
+  // Calculate total time from totalDuration (in minutes)
+  const totalMinutes = userInfo.statistics.totalDuration;
+  const statsData = {
+    totalTime: {
+      hours: Math.floor(totalMinutes / 60),
+      minutes: totalMinutes % 60,
+    },
+    caloriesBurned: 0, // Not provided by API
+    totalDistance: parseFloat(userInfo.statistics.totalDistance).toFixed(0),
+    restDays: 0, // Not provided by API
+    sessions: userInfo.statistics.totalSessions,
+  };
+
   return (
     <div className="profile-container">
       <div className="profile-content">
@@ -87,30 +132,12 @@ export default function Profile() {
               </p>
             </div>
 
-            {/* Calories */}
-            <div className="profile-stat-card">
-              <p className="profile-stat-label">Calories brûlées</p>
-              <p className="profile-stat-value">
-                {statsData.caloriesBurned.toLocaleString()}{" "}
-                <span className="profile-stat-unit">cal</span>
-              </p>
-            </div>
-
             {/* Distance */}
             <div className="profile-stat-card">
               <p className="profile-stat-label">Distance totale parcourue</p>
               <p className="profile-stat-value">
                 {statsData.totalDistance}{" "}
                 <span className="profile-stat-unit">km</span>
-              </p>
-            </div>
-
-            {/* Rest Days */}
-            <div className="profile-stat-card">
-              <p className="profile-stat-label">Nombre de jours de repos</p>
-              <p className="profile-stat-value">
-                {statsData.restDays}{" "}
-                <span className="profile-stat-unit">jours</span>
               </p>
             </div>
 
